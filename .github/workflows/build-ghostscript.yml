@@ -5,10 +5,14 @@ on:
 
 jobs:
   extract-ghostscript:
-    runs-on: macos-latest
     strategy:
       matrix:
-        arch: [arm64, x86_64]
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
     
     steps:
     - name: Checkout repository
@@ -22,27 +26,14 @@ jobs:
         echo "Homebrew Ghostscript version: $GS_VERSION"
         echo "gs_version=$GS_VERSION" >> $GITHUB_OUTPUT
 
-    - name: Install Ghostscript via Homebrew for ${{ matrix.arch }}
+    - name: Install Ghostscript via Homebrew
       run: |
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          # On GitHub Actions, we're already on arm64 runners for macOS
-          arch -arm64 brew install ghostscript
-        else
-          # For x86_64, we need to install Rosetta and use x86_64 brew
-          if ! arch -x86_64 /bin/bash -c "echo 'Rosetta check'"; then
-            softwareupdate --install-rosetta --agree-to-license
-          fi
-          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || true
-          arch -x86_64 /usr/local/bin/brew install ghostscript
-        fi
+        brew install ghostscript
 
     - name: Extract and package Ghostscript binary
       run: |
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          BREW_PREFIX="/opt/homebrew"
-        else
-          BREW_PREFIX="/usr/local"
-        fi
+        # Get Homebrew prefix for current architecture
+        BREW_PREFIX=$(brew --prefix)
         
         # Create package directory
         mkdir -p ghostscript-${{ matrix.arch }}
@@ -61,8 +52,9 @@ jobs:
         done
         
         # Copy Ghostscript resource files
+        mkdir -p ghostscript-${{ matrix.arch }}/share
         if [ -d "$BREW_PREFIX/share/ghostscript" ]; then
-          cp -r "$BREW_PREFIX/share/ghostscript" ghostscript-${{ matrix.arch }}/share/
+          cp -r "$BREW_PREFIX/share/ghostscript" ghostscript-${{ matrix.arch }}/share/ghostscript
         fi
         
         # Verify architecture
@@ -75,7 +67,7 @@ jobs:
         #!/bin/bash
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
-        export GS_LIB="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" | head -1)/lib"
+        export GS_LIB="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" 2>/dev/null | head -1)/lib"
         exec "$SCRIPT_DIR/gs" "$@"
         EOF
         chmod +x ghostscript-${{ matrix.arch }}/gs-wrapper.sh
