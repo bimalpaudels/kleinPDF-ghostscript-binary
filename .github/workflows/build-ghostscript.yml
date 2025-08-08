@@ -65,12 +65,24 @@ jobs:
         file ghostscript-${{ matrix.arch }}/gs
         lipo -info ghostscript-${{ matrix.arch }}/gs || true
         
-        # Create a simple wrapper script to set library paths
+        # Verify Ghostscript structure
+        echo "Verifying Ghostscript structure:"
+        ls -la ghostscript-${{ matrix.arch }}/share/ghostscript/*/Resource/Init/ | head -5 || echo "Resource/Init directory not found"
+        if [ -f ghostscript-${{ matrix.arch }}/share/ghostscript/*/Resource/Init/gs_init.ps ]; then
+          echo "✅ gs_init.ps found in correct location"
+        else
+          echo "❌ gs_init.ps not found in expected location"
+          find ghostscript-${{ matrix.arch }} -name "gs_init.ps" -type f || echo "gs_init.ps not found anywhere"
+        fi
+        
+        # Create a wrapper script with correct paths
         cat > ghostscript-${{ matrix.arch }}/gs-wrapper.sh << 'EOF'
         #!/bin/bash
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
-        export GS_LIB="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" 2>/dev/null | head -1)/lib"
+        # Point to Resource/Init instead of lib
+        GS_VERSION_DIR="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" 2>/dev/null | head -1)"
+        export GS_LIB="$GS_VERSION_DIR/Resource/Init"
         exec "$SCRIPT_DIR/gs" "$@"
         EOF
         chmod +x ghostscript-${{ matrix.arch }}/gs-wrapper.sh
