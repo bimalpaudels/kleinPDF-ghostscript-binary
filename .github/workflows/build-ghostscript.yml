@@ -95,3 +95,49 @@ jobs:
         path: ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz
         retention-days: 90
 
+  create-release:
+    needs: extract-ghostscript
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: Get Ghostscript version
+      id: get_version
+      run: |
+        # Extract version from artifact name
+        VERSION=$(ls artifacts/ | head -1 | sed 's/ghostscript-\(.*\)-macos-.*/\1/')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ghostscript-${{ steps.get_version.outputs.version }}
+        name: Ghostscript ${{ steps.get_version.outputs.version }} macOS Binaries
+        body: |
+          Ghostscript ${{ steps.get_version.outputs.version }} binaries for macOS
+          
+          Built from Homebrew packages:
+          - `ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64.tar.gz` - Apple Silicon (M1/M2/M3)
+          - `ghostscript-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz` - Intel processors
+          
+          Each package includes:
+          - `gs` - Ghostscript binary
+          - `gs-wrapper.sh` - Wrapper script with proper library paths
+          - Required shared libraries and resource files
+          
+          Usage: Extract and run `./gs-wrapper.sh` instead of `gs` directly.
+        files: ./artifacts/**/*.tar.gz
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
