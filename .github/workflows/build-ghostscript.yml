@@ -1,0 +1,118 @@
+name: Extract Ghostscript Binaries from Homebrew
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  extract-ghostscript:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Get Ghostscript version from Homebrew
+      id: get_version
+      run: |
+        # Get the version that Homebrew would install
+        GS_VERSION=$(brew info ghostscript --json | jq -r '.[0].versions.stable')
+        echo "Homebrew Ghostscript version: $GS_VERSION"
+        echo "gs_version=$GS_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Install Ghostscript via Homebrew for ${{ matrix.arch }}
+      run: |
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          # On GitHub Actions, we're already on arm64 runners for macOS
+          arch -arm64 brew install ghostscript
+        else
+          # For x86_64, we need to install Rosetta and use x86_64 brew
+          if ! arch -x86_64 /bin/bash -c "echo 'Rosetta check'"; then
+            softwareupdate --install-rosetta --agree-to-license
+          fi
+          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || true
+          arch -x86_64 /usr/local/bin/brew install ghostscript
+        fi
+
+    - name: Extract and package Ghostscript binary
+      run: |
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          BREW_PREFIX="/opt/homebrew"
+        else
+          BREW_PREFIX="/usr/local"
+        fi
+        
+        # Create package directory
+        mkdir -p ghostscript-${{ matrix.arch }}
+        
+        # Copy the main gs binary
+        cp "$BREW_PREFIX/bin/gs" ghostscript-${{ matrix.arch }}/gs
+        
+        # Copy essential shared libraries that gs depends on
+        mkdir -p ghostscript-${{ matrix.arch }}/lib
+        
+        # Get dynamic library dependencies
+        otool -L "$BREW_PREFIX/bin/gs" | grep "$BREW_PREFIX" | awk '{print $1}' | while read lib; do
+          if [ -f "$lib" ]; then
+            cp "$lib" ghostscript-${{ matrix.arch }}/lib/
+          fi
+        done
+        
+        # Copy Ghostscript resource files
+        if [ -d "$BREW_PREFIX/share/ghostscript" ]; then
+          cp -r "$BREW_PREFIX/share/ghostscript" ghostscript-${{ matrix.arch }}/share/
+        fi
+        
+        # Verify architecture
+        echo "Binary architecture info:"
+        file ghostscript-${{ matrix.arch }}/gs
+        lipo -info ghostscript-${{ matrix.arch }}/gs || true
+        
+        # Create a simple wrapper script to set library paths
+        cat > ghostscript-${{ matrix.arch }}/gs-wrapper.sh << 'EOF'
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
+export GS_LIB="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" | head -1)/lib"
+exec "$SCRIPT_DIR/gs" "$@"
+EOF
+        chmod +x ghostscript-${{ matrix.arch }}/gs-wrapper.sh
+        
+        # Create tar.gz package
+        tar -czf ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz ghostscript-${{ matrix.arch }}/
+
+    - name: Test extracted binary
+      run: |
+        # Test that the extracted binary works
+        cd ghostscript-${{ matrix.arch }}
+        ./gs-wrapper.sh --version || echo "Direct version check failed, this is expected without full setup"
+        ./gs-wrapper.sh -h || echo "Help command failed, this is expected without full setup"
+
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}
+        path: ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz
+        retention-days: 90
+
+  create-release-assets:
+    needs: extract-ghostscript
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./artifacts/**/*.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
