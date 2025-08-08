@@ -52,9 +52,9 @@ jobs:
         done
         
         # Copy Ghostscript resource files
-        mkdir -p ghostscript-${{ matrix.arch }}/share
         if [ -d "$BREW_PREFIX/share/ghostscript" ]; then
-          cp -r "$BREW_PREFIX/share/ghostscript" ghostscript-${{ matrix.arch }}/share/ghostscript
+          mkdir -p ghostscript-${{ matrix.arch }}/share
+          cp -r "$BREW_PREFIX/share/ghostscript" ghostscript-${{ matrix.arch }}/share/
         fi
         
         # Verify architecture
