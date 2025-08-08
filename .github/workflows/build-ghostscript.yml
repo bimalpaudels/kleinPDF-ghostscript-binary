@@ -1,8 +1,6 @@
 name: Extract Ghostscript Binaries from Homebrew
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -74,12 +72,12 @@ jobs:
         
         # Create a simple wrapper script to set library paths
         cat > ghostscript-${{ matrix.arch }}/gs-wrapper.sh << 'EOF'
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
-export GS_LIB="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" | head -1)/lib"
-exec "$SCRIPT_DIR/gs" "$@"
-EOF
+        #!/bin/bash
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
+        export GS_LIB="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" | head -1)/lib"
+        exec "$SCRIPT_DIR/gs" "$@"
+        EOF
         chmod +x ghostscript-${{ matrix.arch }}/gs-wrapper.sh
         
         # Create tar.gz package
@@ -99,20 +97,3 @@ EOF
         path: ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz
         retention-days: 90
 
-  create-release-assets:
-    needs: extract-ghostscript
-    runs-on: ubuntu-latest
-    if: github.event_name == 'release'
-    
-    steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: ./artifacts
-
-    - name: Upload release assets
-      uses: softprops/action-gh-release@v1
-      with:
-        files: ./artifacts/**/*.tar.gz
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
