@@ -35,6 +35,9 @@ jobs:
         # Get Homebrew prefix for current architecture
         BREW_PREFIX=$(brew --prefix)
         
+        # Work in /tmp to avoid any path conflicts
+        cd /tmp
+        
         # Create package directory
         mkdir -p ghostscript-${{ matrix.arch }}
         
@@ -51,10 +54,10 @@ jobs:
           fi
         done
         
-        # Copy Ghostscript resource files
+        # Copy Ghostscript resource files using rsync to avoid cycles
         if [ -d "$BREW_PREFIX/share/ghostscript" ]; then
           mkdir -p ghostscript-${{ matrix.arch }}/share
-          cp -r "$BREW_PREFIX/share/ghostscript" ghostscript-${{ matrix.arch }}/share/
+          rsync -a "$BREW_PREFIX/share/ghostscript/" ghostscript-${{ matrix.arch }}/share/ghostscript/
         fi
         
         # Verify architecture
@@ -74,11 +77,14 @@ jobs:
         
         # Create tar.gz package
         tar -czf ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz ghostscript-${{ matrix.arch }}/
+        
+        # Move back to workspace for artifact upload
+        mv ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz $GITHUB_WORKSPACE/
 
     - name: Test extracted binary
       run: |
         # Test that the extracted binary works
-        cd ghostscript-${{ matrix.arch }}
+        cd /tmp/ghostscript-${{ matrix.arch }}
         ./gs-wrapper.sh --version || echo "Direct version check failed, this is expected without full setup"
         ./gs-wrapper.sh -h || echo "Help command failed, this is expected without full setup"
 
