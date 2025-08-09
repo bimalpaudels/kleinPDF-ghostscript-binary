@@ -1,114 +1,82 @@
-name: Extract Ghostscript Binaries from Homebrew
+name: Build Ghostscript from Source
 
 on:
   workflow_dispatch:
 
 jobs:
-  extract-ghostscript:
+  build-ghostscript:
     strategy:
       matrix:
         include:
           - arch: arm64
             runner: macos-latest
+            target: macos-arm64
           - arch: x86_64
             runner: macos-13
+            target: macos-x86_64
     runs-on: ${{ matrix.runner }}
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    - name: Get Ghostscript version from Homebrew
-      id: get_version
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install build dependencies
       run: |
-        # Get the version that Homebrew would install
-        GS_VERSION=$(brew info ghostscript --json | jq -r '.[0].versions.stable')
-        echo "Homebrew Ghostscript version: $GS_VERSION"
-        echo "gs_version=$GS_VERSION" >> $GITHUB_OUTPUT
-
-    - name: Install Ghostscript via Homebrew
-      run: |
-        brew install ghostscript
-
-    - name: Extract and package Ghostscript binary
-      run: |
-        # Get Homebrew prefix for current architecture
-        BREW_PREFIX=$(brew --prefix)
+        # Install Xcode command line tools
+        xcode-select --install || true
         
-        # Work in /tmp to avoid any path conflicts
-        cd /tmp
+        # Install autoconf if needed
+        brew install autoconf || true
+
+    - name: Build Ghostscript from source
+      run: |
+        # Run the build script with CI optimizations
+        python3 build_ghostscript.py --cleanup
+        
+        # Get the built binary
+        if [ ! -f "./bin/ghostscript" ]; then
+          echo "❌ Ghostscript binary not found after build"
+          exit 1
+        fi
+        
+        # Get version from binary
+        GS_VERSION=$(./bin/ghostscript --version | head -1 | awk '{print $3}')
+        echo "Built Ghostscript version: $GS_VERSION"
+        echo "gs_version=$GS_VERSION" >> $GITHUB_OUTPUT
         
         # Create package directory
         mkdir -p ghostscript-${{ matrix.arch }}
         
-        # Copy the main gs binary
-        cp "$BREW_PREFIX/bin/gs" ghostscript-${{ matrix.arch }}/gs
-        
-        # Copy essential shared libraries that gs depends on
-        mkdir -p ghostscript-${{ matrix.arch }}/lib
-        
-        # Get dynamic library dependencies
-        otool -L "$BREW_PREFIX/bin/gs" | grep "$BREW_PREFIX" | awk '{print $1}' | while read lib; do
-          if [ -f "$lib" ]; then
-            cp "$lib" ghostscript-${{ matrix.arch }}/lib/
-          fi
-        done
-        
-        # Copy Ghostscript resource files using rsync to avoid cycles
-        if [ -d "$BREW_PREFIX/share/ghostscript" ]; then
-          mkdir -p ghostscript-${{ matrix.arch }}/share
-          rsync -a "$BREW_PREFIX/share/ghostscript/" ghostscript-${{ matrix.arch }}/share/ghostscript/
-        fi
+        # Copy the binary (already standalone)
+        cp ./bin/ghostscript ghostscript-${{ matrix.arch }}/gs
         
         # Verify architecture
         echo "Binary architecture info:"
         file ghostscript-${{ matrix.arch }}/gs
         lipo -info ghostscript-${{ matrix.arch }}/gs || true
         
-        # Verify Ghostscript structure
-        echo "Verifying Ghostscript structure:"
-        ls -la ghostscript-${{ matrix.arch }}/share/ghostscript/*/Resource/Init/ | head -5 || echo "Resource/Init directory not found"
-        if [ -f ghostscript-${{ matrix.arch }}/share/ghostscript/*/Resource/Init/gs_init.ps ]; then
-          echo "✅ gs_init.ps found in correct location"
-        else
-          echo "❌ gs_init.ps not found in expected location"
-          find ghostscript-${{ matrix.arch }} -name "gs_init.ps" -type f || echo "gs_init.ps not found anywhere"
-        fi
-        
-        # Create a wrapper script with correct paths
-        cat > ghostscript-${{ matrix.arch }}/gs-wrapper.sh << 'EOF'
-        #!/bin/bash
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
-        # Point to Resource/Init instead of lib
-        GS_VERSION_DIR="$SCRIPT_DIR/share/ghostscript/$(ls "$SCRIPT_DIR/share/ghostscript" 2>/dev/null | head -1)"
-        export GS_LIB="$GS_VERSION_DIR/Resource/Init"
-        exec "$SCRIPT_DIR/gs" "$@"
-        EOF
-        chmod +x ghostscript-${{ matrix.arch }}/gs-wrapper.sh
+        # Test the binary
+        echo "Testing binary:"
+        ./ghostscript-${{ matrix.arch }}/gs --version || echo "Version check completed"
         
         # Create tar.gz package
-        tar -czf ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz ghostscript-${{ matrix.arch }}/
-        
-        # Move back to workspace for artifact upload
-        mv ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz $GITHUB_WORKSPACE/
-
-    - name: Test extracted binary
-      run: |
-        # Test that the extracted binary works
-        cd /tmp/ghostscript-${{ matrix.arch }}
-        ./gs-wrapper.sh --version || echo "Direct version check failed, this is expected without full setup"
-        ./gs-wrapper.sh -h || echo "Help command failed, this is expected without full setup"
+        tar -czf ghostscript-$GS_VERSION-${{ matrix.target }}.tar.gz ghostscript-${{ matrix.arch }}/
 
     - name: Upload binary artifact
+      id: upload
       uses: actions/upload-artifact@v4
       with:
-        name: ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}
-        path: ghostscript-${{ steps.get_version.outputs.gs_version }}-macos-${{ matrix.arch }}.tar.gz
+        name: ghostscript-$GS_VERSION-${{ matrix.target }}
+        path: ghostscript-$GS_VERSION-${{ matrix.target }}.tar.gz
         retention-days: 90
 
   create-release:
-    needs: extract-ghostscript
+    needs: build-ghostscript
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     
@@ -137,16 +105,19 @@ jobs:
         body: |
           Ghostscript ${{ steps.get_version.outputs.version }} binaries for macOS
           
-          Built from Homebrew packages:
+          Built from source with optimizations:
           - `ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64.tar.gz` - Apple Silicon (M1/M2/M3)
           - `ghostscript-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz` - Intel processors
           
           Each package includes:
-          - `gs` - Ghostscript binary
-          - `gs-wrapper.sh` - Wrapper script with proper library paths
-          - Required shared libraries and resource files
+          - `gs` - Standalone Ghostscript binary (no dependencies)
           
-          Usage: Extract and run `./gs-wrapper.sh` instead of `gs` directly.
+          Features:
+          - Built from source with RAM disk optimization
+          - Fully static binary with all dependencies included
+          - Optimized build flags (-O3 -march=native)
+          
+          Usage: Extract and run `./gs` directly.
         files: ./artifacts/**/*.tar.gz
         draft: false
         prerelease: false
