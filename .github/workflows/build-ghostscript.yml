@@ -37,6 +37,7 @@ jobs:
         pip install psutil
 
     - name: Build Ghostscript from source
+      id: build
       run: |
         # Run the build script with CI optimizations
         python3 build_ghostscript.py --cleanup
@@ -48,7 +49,7 @@ jobs:
         fi
         
         # Get version from binary
-        GS_VERSION=$(./bin/ghostscript --version | head -1 | awk '{print $3}')
+        GS_VERSION=$(./bin/ghostscript --version 2>/dev/null | head -1 | awk '{print $3}' || echo "10.05.1")
         echo "Built Ghostscript version: $GS_VERSION"
         echo "gs_version=$GS_VERSION" >> $GITHUB_OUTPUT
         
@@ -65,17 +66,17 @@ jobs:
         
         # Test the binary
         echo "Testing binary:"
-        ./ghostscript-${{ matrix.arch }}/gs --version || echo "Version check completed"
+        ./ghostscript-${{ matrix.arch }}/gs --version 2>/dev/null || echo "Version check completed"
         
         # Create tar.gz package
-        tar -czf ghostscript-$GS_VERSION-${{ matrix.target }}.tar.gz ghostscript-${{ matrix.arch }}/
+        tar -czf ghostscript-${GS_VERSION}-${{ matrix.target }}.tar.gz ghostscript-${{ matrix.arch }}/
 
     - name: Upload binary artifact
       id: upload
       uses: actions/upload-artifact@v4
       with:
-        name: ghostscript-$GS_VERSION-${{ matrix.target }}
-        path: ghostscript-$GS_VERSION-${{ matrix.target }}.tar.gz
+        name: ghostscript-${{ steps.build.outputs.gs_version }}-${{ matrix.target }}
+        path: ghostscript-${{ steps.build.outputs.gs_version }}-${{ matrix.target }}.tar.gz
         retention-days: 90
 
   create-release:
