@@ -46,8 +46,22 @@ jobs:
           fi
 
           # Get version from binary
-          GS_VERSION=$(./bin/ghostscript --version 2>/dev/null | head -1 | awk '{print $3}' || echo "10.05.1")
+          echo "Getting version from binary..."
+          VERSION_OUTPUT=$(./bin/ghostscript --version 2>/dev/null | head -1)
+          echo "Version output: '$VERSION_OUTPUT'"
+          
+          # Try different field positions to extract version number
+          GS_VERSION=$(echo "$VERSION_OUTPUT" | awk '{print $3}' | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || \
+                       echo "$VERSION_OUTPUT" | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || \
+                       echo "$VERSION_OUTPUT" | awk '{print $2}' | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || \
+                       echo "10.05.1")
+          
           echo "Built Ghostscript version: $GS_VERSION"
+          
+          if [ "$GS_VERSION" = "10.05.1" ]; then
+            echo "⚠️ Using fallback version - could not extract from binary output"
+          fi
+          
           echo "gs_version=$GS_VERSION" >> $GITHUB_OUTPUT
 
           # Verify architecture
@@ -59,15 +73,21 @@ jobs:
           echo "Testing binary:"
           ./bin/ghostscript --version 2>/dev/null || echo "Version check completed"
 
-          # Create tar.gz package (just the binary, no folder wrapper)
+          # Create both formats
+          # 1. Direct binary (renamed for clarity)
+          cp ./bin/ghostscript ghostscript-${GS_VERSION}-${{ matrix.target }}
+          
+          # 2. tar.gz package (just the binary, no folder wrapper)
           tar -czf ghostscript-${GS_VERSION}-${{ matrix.target }}.tar.gz -C ./bin ghostscript
 
-      - name: Upload binary artifact
+      - name: Upload binary artifacts
         id: upload
         uses: actions/upload-artifact@v4
         with:
           name: ghostscript-${{ steps.build.outputs.gs_version }}-${{ matrix.target }}
-          path: ghostscript-${{ steps.build.outputs.gs_version }}-${{ matrix.target }}.tar.gz
+          path: |
+            ghostscript-${{ steps.build.outputs.gs_version }}-${{ matrix.target }}
+            ghostscript-${{ steps.build.outputs.gs_version }}-${{ matrix.target }}.tar.gz
           retention-days: 90
 
   create-release:
@@ -89,7 +109,17 @@ jobs:
         run: |
           # Extract version from artifact name
           ARTIFACT_NAME=$(ls artifacts/ | head -1)
+          echo "Found artifact: $ARTIFACT_NAME"
           VERSION=$(echo "$ARTIFACT_NAME" | sed 's/ghostscript-\(.*\)-macos-.*/\1/')
+          echo "Extracted version: $VERSION"
+          
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$ARTIFACT_NAME" ]; then
+            echo "❌ Could not extract version from artifact name: $ARTIFACT_NAME"
+            echo "Available artifacts:"
+            ls -la artifacts/
+            exit 1
+          fi
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create Release
@@ -102,15 +132,31 @@ jobs:
             Ghostscript ${{ steps.get_version.outputs.version }} standalone binaries for macOS
 
             **Downloads:**
-            - `ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64.tar.gz` - Apple Silicon (M1/M2/M3)
-            - `ghostscript-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz` - Intel processors
+            
+            **Apple Silicon (M1/M2/M3):**
+            - `ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64` - Direct binary (ready to use)
+            - `ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64.tar.gz` - Archived binary
+            
+            **Intel processors:**
+            - `ghostscript-${{ steps.get_version.outputs.version }}-macos-x86_64` - Direct binary (ready to use)
+            - `ghostscript-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz` - Archived binary
 
             **Usage:**
+            
+            Direct binary:
             ```bash
+            # Download and make executable
+            chmod +x ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64
+            ./ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64 --version
+            ```
+            
+            Archived binary:
+            ```bash
+            # Extract and run
             tar -xzf ghostscript-${{ steps.get_version.outputs.version }}-macos-arm64.tar.gz
             ./ghostscript --version
             ```
-          files: ./artifacts/**/*.tar.gz
+          files: ./artifacts/**/*
           draft: false
           prerelease: false
         env:
