@@ -10,7 +10,6 @@ import argparse
 import time
 import hashlib
 from pathlib import Path
-import psutil
 from urllib.parse import urlparse
 
 
@@ -77,19 +76,13 @@ def extract_tarball_with_progress(tar_path, extract_to):
 
 
 def get_optimal_ram_disk_size():
-    """Determine optimal RAM disk size based on available system memory"""
-    try:
-        available_ram_gb = psutil.virtual_memory().available // (1024**3)
-        # Use 25% of available RAM, capped between 1GB and 4GB
-        optimal_size = max(1024, min(4096, int(available_ram_gb * 0.25 * 1024)))
-        return optimal_size
-    except ImportError:
-        # Fallback: detect CI environment and set accordingly
-        if os.environ.get("GITHUB_ACTIONS") == "true":
-            # GitHub Actions runners have 7GB RAM, use 2GB
-            return 2048
-        else:
-            return 1536
+    """Determine optimal RAM disk size for GitHub Mac runners"""
+    # GitHub Actions Mac runners have 14GB RAM
+    # Use 3GB for optimal performance without overwhelming the system
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return 3072  # 3GB for GitHub Actions Mac runners
+    else:
+        return 2048  # 2GB for local development
 
 
 def setup_ram_disk(size_mb=None):

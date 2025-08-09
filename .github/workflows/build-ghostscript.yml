@@ -33,8 +33,6 @@ jobs:
         # Install autoconf if needed
         brew install autoconf || true
 
-        # Install psutils
-        pip install psutil
 
     - name: Build Ghostscript from source
       id: build
@@ -96,8 +94,28 @@ jobs:
     - name: Get Ghostscript version
       id: get_version
       run: |
-        # Extract version from artifact name
-        VERSION=$(ls artifacts/ | head -1 | sed 's/ghostscript-\(.*\)-macos-.*/\1/')
+        # Debug: List all artifacts
+        echo "Available artifacts:"
+        ls -la artifacts/ || echo "No artifacts directory found"
+        
+        # Extract version from artifact name with fallback
+        if [ -d "artifacts/" ] && [ "$(ls artifacts/ | wc -l)" -gt 0 ]; then
+          ARTIFACT_NAME=$(ls artifacts/ | head -1)
+          echo "First artifact: $ARTIFACT_NAME"
+          VERSION=$(echo "$ARTIFACT_NAME" | sed 's/ghostscript-\(.*\)-macos-.*/\1/')
+        else
+          # Fallback to hardcoded version if artifacts are missing
+          VERSION="10.05.1"
+          echo "No artifacts found, using fallback version: $VERSION"
+        fi
+        
+        # Validate version format
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Invalid version format: $VERSION, using fallback"
+          VERSION="10.05.1"
+        fi
+        
+        echo "Final version: $VERSION"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
     - name: Create Release
@@ -117,9 +135,10 @@ jobs:
           - `gs` - Standalone Ghostscript binary (no dependencies)
           
           Features:
-          - Built from source with RAM disk optimization
+          - Built from source with 3GB RAM disk optimization for GitHub Mac runners
           - Fully static binary with all dependencies included
           - Optimized build flags (-O3 -march=native)
+          - No external dependencies (psutil removed)
           
           Usage: Extract and run `./gs` directly.
         files: ./artifacts/**/*.tar.gz
